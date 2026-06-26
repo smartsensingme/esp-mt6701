@@ -56,7 +56,7 @@ Via `menuconfig` (`Component config` -> `MT6701 Driver Configuration`):
 
 Adicione este repositório como um submódulo Git na pasta `components` do seu projeto ESP-IDF:
 ```bash
-git submodule add <url-do-repositorio> components/esp-mt6701
+git submodule add https://github.com/smartsensingme/esp-mt6701.git components/esp-mt6701
 ```
 Em seguida, atualize o arquivo `CMakeLists.txt` do seu componente principal para declarar o requisito:
 ```cmake
