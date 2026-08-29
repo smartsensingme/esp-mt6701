@@ -114,7 +114,7 @@ void control_loop_task(void *pvParameters) {
             float deg, velocity;
             int32_t turns;
             
-            mt6701_get_angle_degrees(&mt6701_device, &deg);
+            mt6701_read_angle_degrees(&mt6701_device, &deg);
             mt6701_get_total_turns(&mt6701_device, &turns);
             mt6701_get_velocity(&mt6701_device, &velocity);
             
@@ -167,22 +167,30 @@ esp_err_t mt6701_update(mt6701_dev_t *dev);
     *   `ESP_ERR_INVALID_ARG` if `dev` is `NULL`.
     *   I2C transmission error codes on failure.
 
-### `mt6701_get_angle_raw`
+### `mt6701_counts_to_degrees`
 ```c
-esp_err_t mt6701_get_angle_raw(mt6701_dev_t *dev, uint16_t *angle);
+float mt6701_counts_to_degrees(uint16_t angle_counts);
 ```
-*   **Description:** Fetches the most recent raw angle from hardware, applies the software calibration zero-offset and direction inversion, and returns the calibrated raw 14-bit angle value.
+*   **Description:** Converts a raw or calibrated 14-bit angle count (`0` to `16383`) to degrees without accessing the I2C bus.
+*   **Return Value:** Angle from `0.0f` to approximately `359.978f` degrees.
+
+### `mt6701_read_calibrated_angle_counts`
+```c
+esp_err_t mt6701_read_calibrated_angle_counts(mt6701_dev_t *dev,
+                                               uint16_t *angle_counts);
+```
+*   **Description:** Performs a new sensor read, applies the software zero-offset and direction calibration, and returns the angle as 14-bit counts.
 *   **Parameters:**
     *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `angle`: Pointer to a `uint16_t` where the calibrated 14-bit angle (`0` to `16383`) will be written.
+    *   `angle_counts`: Pointer to a `uint16_t` where the calibrated counts (`0` to `16383`) will be written.
 *   **Return Value:**
     *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `angle` is `NULL`.
+    *   `ESP_ERR_INVALID_ARG` if `dev` or `angle_counts` is `NULL`.
     *   I2C transmission error codes on failure.
 
-### `mt6701_get_angle_degrees`
+### `mt6701_read_angle_degrees`
 ```c
-esp_err_t mt6701_get_angle_degrees(mt6701_dev_t *dev, float *degrees);
+esp_err_t mt6701_read_angle_degrees(mt6701_dev_t *dev, float *degrees);
 ```
 *   **Description:** Re-reads the sensor, calibrates it, and returns the current position mapped to a floating-point degree representation.
 *   **Parameters:**
@@ -193,9 +201,9 @@ esp_err_t mt6701_get_angle_degrees(mt6701_dev_t *dev, float *degrees);
     *   `ESP_ERR_INVALID_ARG` if `dev` or `degrees` is `NULL`.
     *   I2C transmission error codes on failure.
 
-### `mt6701_get_angle_radians`
+### `mt6701_read_angle_radians`
 ```c
-esp_err_t mt6701_get_angle_radians(mt6701_dev_t *dev, float *radians);
+esp_err_t mt6701_read_angle_radians(mt6701_dev_t *dev, float *radians);
 ```
 *   **Description:** Re-reads the sensor, calibrates it, and returns the current position mapped to a floating-point radian representation.
 *   **Parameters:**
@@ -205,6 +213,13 @@ esp_err_t mt6701_get_angle_radians(mt6701_dev_t *dev, float *radians);
     *   `ESP_OK` on success.
     *   `ESP_ERR_INVALID_ARG` if `dev` or `radians` is `NULL`.
     *   I2C transmission error codes on failure.
+
+### `mt6701_get_last_angle_degrees`
+```c
+esp_err_t mt6701_get_last_angle_degrees(mt6701_dev_t *dev, float *degrees);
+```
+*   **Description:** Returns the last calibrated sample stored by `mt6701_update` in degrees without performing another I2C read.
+*   **Return Value:** `ESP_OK` on success, `ESP_ERR_INVALID_ARG` for null pointers, or `ESP_ERR_TIMEOUT` if the mutex cannot be acquired.
 
 ### `mt6701_get_total_angle_radians`
 ```c
