@@ -174,6 +174,18 @@ float mt6701_counts_to_degrees(uint16_t angle_counts);
 *   **Description:** Converts a raw or calibrated 14-bit angle count (`0` to `16383`) to degrees without accessing the I2C bus.
 *   **Return Value:** Angle from `0.0f` to approximately `359.978f` degrees.
 
+### `mt6701_get_last_angle_counts`
+
+```c
+esp_err_t mt6701_get_last_angle_counts(mt6701_dev_t *dev,
+                                       uint16_t *angle_counts);
+```
+
+Returns the last angle cached by `mt6701_update()` as 14-bit counts, after
+software zero and direction processing, without performing another I2C
+transaction. This is useful when a count-domain linearization is applied before
+converting the measurement to physical units.
+
 ### `mt6701_read_calibrated_angle_counts`
 ```c
 esp_err_t mt6701_read_calibrated_angle_counts(mt6701_dev_t *dev,

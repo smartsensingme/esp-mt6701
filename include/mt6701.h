@@ -11,6 +11,7 @@
 #endif
 
 #define MT6701_I2C_ADDRESS 0x06
+#define MT6701_COUNTS_PER_REVOLUTION 16384U
 
 // Registers
 #define MT6701_REG_ANGLE_H 0x03
@@ -115,6 +116,19 @@ esp_err_t mt6701_read_angle_degrees(mt6701_dev_t *dev, float *degrees);
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t mt6701_get_last_angle_degrees(mt6701_dev_t *dev, float *degrees);
+
+/**
+ * @brief Get the last calibrated angle cached by mt6701_update(), in counts
+ *
+ * The returned 14-bit value already has the software zero offset and direction
+ * applied. This function does not access the I2C bus.
+ *
+ * @param dev Pointer to the device structure
+ * @param angle_counts Pointer to store the cached angle (0 to 16383)
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t mt6701_get_last_angle_counts(mt6701_dev_t *dev,
+                                       uint16_t *angle_counts);
 
 /**
  * @brief Read the latest calibrated angle in radians (0.0 to 2*PI)

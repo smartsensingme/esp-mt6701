@@ -176,6 +176,18 @@ float mt6701_counts_to_degrees(uint16_t angle_counts);
 *   **Descrição:** Converte uma contagem angular bruta ou calibrada de 14 bits (`0` a `16383`) para graus, sem acessar o barramento I2C.
 *   **Valor de Retorno:** Ângulo entre `0.0f` e aproximadamente `359.978f` graus.
 
+### `mt6701_get_last_angle_counts`
+
+```c
+esp_err_t mt6701_get_last_angle_counts(mt6701_dev_t *dev,
+                                       uint16_t *angle_counts);
+```
+
+Retorna em 14 bits o último ângulo armazenado por `mt6701_update()`, depois da
+aplicação do zero e da direção em software, sem realizar outra transação I2C.
+Isso permite aplicar uma linearização no domínio de contagens antes de converter
+a medição para unidades físicas.
+
 ### `mt6701_read_calibrated_angle_counts`
 ```c
 esp_err_t mt6701_read_calibrated_angle_counts(mt6701_dev_t *dev,

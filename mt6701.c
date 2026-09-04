@@ -209,6 +209,26 @@ esp_err_t mt6701_get_last_angle_degrees(mt6701_dev_t *dev, float *degrees) {
     return ESP_OK;
 }
 
+esp_err_t mt6701_get_last_angle_counts(mt6701_dev_t *dev,
+                                       uint16_t *angle_counts) {
+    if (!dev || !angle_counts) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+#if CONFIG_MT6701_THREAD_SAFE
+    if (xSemaphoreTake(dev->lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+#endif
+
+    *angle_counts = dev->last_calibrated_angle;
+
+#if CONFIG_MT6701_THREAD_SAFE
+    xSemaphoreGive(dev->lock);
+#endif
+    return ESP_OK;
+}
+
 esp_err_t mt6701_read_angle_radians(mt6701_dev_t *dev, float *radians) {
     if (!dev || !radians) {
         return ESP_ERR_INVALID_ARG;
