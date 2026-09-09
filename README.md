@@ -21,6 +21,29 @@ It utilizes the modern ESP-IDF master I2C driver (`driver/i2c_master.h`) and fea
 
 ---
 
+## 🔌 Suggested ESP32-S3 Wiring
+
+The following wiring is used by the current reference project and is the
+recommended starting point for connecting an ESP32-S3 to the MT6701 over I2C:
+
+| ESP32-S3 | MT6701 | Function |
+|---|---|---|
+| `3V3` | `VDD` | Sensor and I2C logic supply |
+| `GND` | `GND` / `VSS` | Common ground |
+| `GPIO8` | `SDA` | I2C data |
+| `GPIO9` | `SCL` | I2C clock |
+
+`GPIO8` and `GPIO9` are application choices, not fixed requirements of this
+driver. They can be changed when the I2C master bus is created. The current
+project uses address `0x06` and a 1 MHz I2C clock. At that rate, keep the wiring
+short and use suitable external pull-up resistors from SDA and SCL to `3V3`;
+the ESP32-S3 internal pull-ups should be treated only as a fallback.
+
+The MT6701's optional analog/ABI/UVW outputs are not required by this I2C
+driver and may remain unconnected when they are not used elsewhere.
+
+---
+
 ## 📈 MT6701 Hardware Specifications & Update Limits
 
 ### Hardware Performance

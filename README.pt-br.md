@@ -21,6 +21,31 @@ O componente utiliza o driver mestre de I2C moderno do ESP-IDF (`driver/i2c_mast
 
 ---
 
+## 🔌 Ligação sugerida ao ESP32-S3
+
+A ligação abaixo é usada pelo projeto de referência atual e é o ponto de
+partida recomendado para conectar o ESP32-S3 ao MT6701 por I2C:
+
+| ESP32-S3 | MT6701 | Função |
+|---|---|---|
+| `3V3` | `VDD` | Alimentação do sensor e da lógica I2C |
+| `GND` | `GND` / `VSS` | Terra comum |
+| `GPIO8` | `SDA` | Dados I2C |
+| `GPIO9` | `SCL` | Clock I2C |
+
+Os pinos `GPIO8` e `GPIO9` são escolhas da aplicação, e não exigências fixas
+do driver. Eles podem ser alterados durante a criação do barramento I2C mestre.
+O projeto atual usa o endereço `0x06` e clock I2C de 1 MHz. Nessa frequência,
+mantenha as ligações curtas e use resistores externos de pull-up adequados de
+SDA e SCL para `3V3`; os pull-ups internos do ESP32-S3 devem ser considerados
+apenas uma alternativa de contingência.
+
+As saídas opcionais analógica/ABI/UVW do MT6701 não são necessárias para este
+driver I2C e podem ficar desconectadas quando não forem usadas por outro
+circuito.
+
+---
+
 ## 📈 Especificações de Hardware e Limites de Atualização do MT6701
 
 ### Performance do Hardware
