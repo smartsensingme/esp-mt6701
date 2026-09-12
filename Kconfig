@@ -1,10 +1,17 @@
 menu "MT6701 Driver Configuration"
 
     config MT6701_THREAD_SAFE
-        bool "Thread-safe driver"
+        bool "Protect each MT6701 instance with a mutex"
         default y
         help
-            Enable thread-safety. When checked, the driver uses a Mutex semaphore to synchronize
-            calls. If disabled, all mutex instructions are compiled out for maximum performance.
+            When enabled, each mt6701_dev_t contains a statically allocated
+            FreeRTOS mutex. The driver uses it to serialize I2C transactions and
+            access to calibration, multi-turn, angle-cache, and velocity state.
+
+            Disable this option only when one task owns each instance and no
+            concurrent task or ISR can access it. Disabling compiles out all
+            mutex operations and reduces the overhead of a high-rate control
+            path. Sensor-reading APIs remain unsuitable for ISR use because the
+            ESP-IDF I2C master transaction is blocking.
 
 endmenu

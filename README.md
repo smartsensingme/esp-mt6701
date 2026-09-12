@@ -1,351 +1,295 @@
-# MT6701 Magnetic Encoder Driver - ESP-IDF Component
+# `esp-mt6701`
 
-*Read in other languages: [Português](README.pt-br.md)*
+Portuguese documentation: [README.pt-br.md](README.pt-br.md).
 
-This directory contains a clean, decoupled, and highly optimized component for the **MagnTek MT6701** 14-bit magnetic rotary encoder, designed for **ESP-IDF v6** and targeting high-speed operations.
+`esp-mt6701` is an ESP-IDF component for reading the 14-bit absolute angle of
+the MagnTek MT6701 over I2C. It also provides software zero and direction,
+multi-turn tracking, and a filtered velocity estimate.
 
-It utilizes the modern ESP-IDF master I2C driver (`driver/i2c_master.h`) and features software-driven calibrations, velocity estimation, multi-turn accumulation, and optional thread safety.
+The driver uses the modern ESP-IDF master API from `driver/i2c_master.h`. The
+application owns the I2C bus and device handles and supplies the registered
+device handle to `mt6701_init()`.
 
----
+## Scope
 
-## 🛠️ Features
+The component provides:
 
-1.  **Software-Driven Design (Read-Only I2C):** To bypass the hardware EEPROM requirements (which mandate a 4.5V–5.5V VDD supply and a 600ms blocking delay), this driver handles Zero Position and Rotation Direction entirely in software. The I2C bus is read-only during execution, ensuring maximum speed and safety.
-2.  **14-bit Resolution:** Supports the full 14-bit absolute angle output (`0` to `16383` steps) of the MT6701.
-3.  **Thread Safety Toggle (Kconfig):**
-    *   **`CONFIG_MT6701_THREAD_SAFE=y`** (Default): Protects internal states and I2C registers using a FreeRTOS Mutex, ensuring safe concurrent accesses.
-    *   **`CONFIG_MT6701_THREAD_SAFE=n`**: Compiles out all mutex operations, providing lock-free, zero-overhead routines for high-frequency control loops.
-4.  **Multi-Turn Accumulation:** Automatically tracks wrapping (crossover transitions at half-resolution) to monitor total turns and continuous accumulated rotation.
-5.  **Velocity Estimation:** Computes angular speed in radians per second (`rad/s`) using hardware timestamps (`esp_timer_get_time()`) combined with an adjustable low-pass filter to smooth out discretization noise.
-6.  **Optimized Burst Reads:** Read routines fetch both angle registers (`0x03` and `0x04`) in a single, continuous 2-byte I2C transaction.
+- one two-byte burst read for the native 14-bit angle;
+- software zero and direction without writing MT6701 EEPROM;
+- cached angle in native counts or degrees;
+- fresh angle reads in counts, degrees, or radians;
+- signed multi-turn tracking;
+- first-order filtered angular velocity in radians per second;
+- optional per-instance mutex protection with no dynamic allocation.
 
----
+It does not configure the I2C pins or clock, validate magnet placement, read
+diagnostic outputs, persist software calibration, or apply an angle-linearity
+LUT. Those responsibilities belong to the application or another component.
 
-## 🔌 Suggested ESP32-S3 Wiring
+## Data flow
 
-The following wiring is used by the current reference project and is the
-recommended starting point for connecting an ESP32-S3 to the MT6701 over I2C:
+The normal periodic path is:
 
-| ESP32-S3 | MT6701 | Function |
+```text
+MT6701 registers 0x03/0x04
+        |
+        v
+mt6701_update()
+        |
+        +-- software zero and direction
+        +-- cyclic displacement and turn counter
+        +-- instantaneous velocity and low-pass filter
+        |
+        v
+cached state
+  |-- mt6701_get_last_angle_counts()
+  |-- mt6701_get_last_angle_degrees()
+  |-- mt6701_get_total_turns()
+  |-- mt6701_get_total_angle_radians()
+  `-- mt6701_get_velocity()
+```
+
+Call `mt6701_update()` once per control iteration, then use cached getters. This
+keeps angle, turns, and velocity associated with the same sensor sample.
+
+The functions whose names start with `mt6701_read_` acquire a new I2C sample.
+For example, calling `mt6701_read_angle_degrees()` immediately after
+`mt6701_update()` performs a second transaction and may return a slightly newer
+angle than the cached velocity and turn count.
+
+## Suggested ESP32-S3 wiring
+
+This is the wiring used by the current reference project:
+
+| ESP32-S3 | MT6701 | Purpose |
 |---|---|---|
 | `3V3` | `VDD` | Sensor and I2C logic supply |
-| `GND` | `GND` / `VSS` | Common ground |
+| `GND` | `GND` / `VSS` | Common reference |
 | `GPIO8` | `SDA` | I2C data |
 | `GPIO9` | `SCL` | I2C clock |
 
-`GPIO8` and `GPIO9` are application choices, not fixed requirements of this
-driver. They can be changed when the I2C master bus is created. The current
-project uses address `0x06` and a 1 MHz I2C clock. At that rate, keep the wiring
-short and use suitable external pull-up resistors from SDA and SCL to `3V3`;
-the ESP32-S3 internal pull-ups should be treated only as a fallback.
+GPIO8 and GPIO9 are application choices, not fixed driver requirements. The
+MT6701 I2C address is fixed at `MT6701_I2C_ADDRESS` (`0x06`). The reference
+application uses a 1 MHz bus. At that rate, keep wiring short and use suitable
+external pull-ups to 3.3 V; internal ESP32-S3 pull-ups are weak and should not
+be the first choice for a robust high-speed bus.
 
-The MT6701's optional analog/ABI/UVW outputs are not required by this I2C
-driver and may remain unconnected when they are not used elsewhere.
+The MT6701 analog, ABI, and UVW outputs are not used by this I2C driver.
 
----
+## Adding the component
 
-## 📈 MT6701 Hardware Specifications & Update Limits
+Place the repository under the application's `components` directory and add it
+as a requirement of the consuming component:
 
-### Hardware Performance
-*   **Resolution:** 14-bit (16,384 positions per 360° revolution, approx $0.022^\circ$ per LSB).
-*   **Integral Non-Linearity (INL):** $\pm 0.05^\circ$ (typical under ideal magnet centering and air gap).
-*   **Transition Noise (Jitter):** $0.01^\circ$ RMS (typical at $25^\circ\text{C}$).
-*   **Propagation Latency:** $< 100\,\mu\text{s}$ internal processing delay.
-
-### Maximum `mt6701_update` Frequency
-The maximum rate at which you can call `mt6701_update` is limited by I2C bus speeds and microcontroller overhead:
-*   **At 400 kHz (I2C Fast Mode):** A single 2-byte burst transaction takes $\approx 73\,\mu\text{s}$. Including driver overhead, the theoretical maximum update rate is **$10\text{ kHz}$** ($100\,\mu\text{s}$ loop).
-*   **At 1 MHz (I2C Fast Mode Plus):** The transaction takes $\approx 29\,\mu\text{s}$. The theoretical maximum update rate is **$20\text{ kHz}$** ($50\,\mu\text{s}$ loop).
-*   **Recommended Update Rate:** A sampling rate of **$1\text{ kHz}$ to $5\text{ kHz}$** is recommended. This keeps CPU usage low, leaves bus bandwidth for other devices, and delivers highly responsive speed estimates.
-
-> [!TIP]
-> **Anti-Aliasing Limit (Max Motor Speed):**
-> For the software turn-counter (multi-turn) to detect direction correctly, the motor must not rotate more than $180^\circ$ (half-revolution) between two consecutive calls to `mt6701_update`.
-> The relationship between maximum motor speed $N$ (in RPM) and required update frequency $f_{update}$ is:
-> $$f_{update} > \frac{N}{30}$$
-> *   At **1 kHz** sampling rate, the driver supports motor speeds up to **30,000 RPM**.
-> *   At **5 kHz** sampling rate, the driver supports motor speeds up to **150,000 RPM**.
-
----
-
-## ⚙️ Configuration Properties
-
-Via `menuconfig` (`Component config` -> `MT6701 Driver Configuration`):
-*   **`CONFIG_MT6701_THREAD_SAFE`**: Enable or disable Mutex protection.
-
----
-
-## 🚀 How to Add to Your Project
-
-Add this repository as a Git submodule in your ESP-IDF project's `components` directory:
-```bash
-git submodule add https://github.com/smartsensingme/esp-mt6701.git components/esp-mt6701
-```
-Then, update your component `CMakeLists.txt` to require it:
 ```cmake
-idf_component_register(SRCS "main.c"
-                       REQUIRES esp-mt6701)
+idf_component_register(
+    SRCS "my_control.c"
+    INCLUDE_DIRS "."
+    REQUIRES esp-mt6701
+)
 ```
 
----
+Include the public header:
 
-## 📖 API Usage Example
-
-Include the driver header:
 ```c
 #include "mt6701.h"
 ```
 
-Initialize the device:
+## Kconfig
+
+`Component config -> MT6701 Driver Configuration` exposes:
+
+| Option | Meaning |
+|---|---|
+| `CONFIG_MT6701_THREAD_SAFE=y` | Creates one static FreeRTOS mutex per instance and protects I2C transactions and shared state. |
+| `CONFIG_MT6701_THREAD_SAFE=n` | Compiles out mutex operations for a lower-overhead, single-owner real-time path. |
+
+When thread safety is disabled, do not access the same `mt6701_dev_t` instance
+concurrently from multiple tasks or ISRs. None of the APIs are intended for ISR
+use because sensor reads call the blocking I2C master driver.
+
+## Complete initialization example
+
 ```c
-// 1. Initialize your I2C master bus handle
-i2c_master_bus_config_t bus_config = {
-    .i2c_port = I2C_NUM_0,
-    .sda_io_num = 8,
-    .scl_io_num = 9,
-    .clk_source = I2C_CLK_SRC_DEFAULT,
-    .flags.enable_internal_pullup = true,
-};
-i2c_master_bus_handle_t bus_handle;
-i2c_new_master_bus(&bus_config, &bus_handle);
+#include "driver/i2c_master.h"
+#include "esp_check.h"
+#include "mt6701.h"
 
-// 2. Add the MT6701 device to the bus (Address 0x06)
-i2c_device_config_t dev_config = {
-    .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    .device_address = MT6701_I2C_ADDRESS,
-    .scl_speed_hz = 400000, // Supports up to 1MHz Fast Mode Plus
-};
-i2c_master_dev_handle_t i2c_dev;
-i2c_master_bus_add_device(bus_handle, &dev_config, &i2c_dev);
+static i2c_master_bus_handle_t sensor_bus;
+static i2c_master_dev_handle_t sensor_i2c_device;
+static mt6701_dev_t sensor;
 
-// 3. Initialize the driver device handle
-mt6701_dev_t mt6701_device;
-ESP_ERROR_CHECK(mt6701_init(&mt6701_device, i2c_dev));
+esp_err_t sensor_init(void)
+{
+    const i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = GPIO_NUM_8,
+        .scl_io_num = GPIO_NUM_9,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_config, &sensor_bus),
+                        "SENSOR", "create I2C bus");
 
-// 4. Configure software-driven properties (Optional)
-mt6701_set_software_direction(&mt6701_device, MT6701_DIR_CW);
-```
+    const i2c_device_config_t device_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = MT6701_I2C_ADDRESS,
+        .scl_speed_hz = 1000000,
+    };
+    ESP_RETURN_ON_ERROR(
+        i2c_master_bus_add_device(sensor_bus, &device_config,
+                                  &sensor_i2c_device),
+        "SENSOR", "register MT6701");
 
-Read sensor data in a loop:
-```c
-void control_loop_task(void *pvParameters) {
-    TickType_t last_wake_time = xTaskGetTickCount();
-    
-    while (1) {
-        // Query sensor and update multi-turn & velocity tracking
-        if (mt6701_update(&mt6701_device) == ESP_OK) {
-            float deg, velocity;
-            int32_t turns;
-            
-            mt6701_read_angle_degrees(&mt6701_device, &deg);
-            mt6701_get_total_turns(&mt6701_device, &turns);
-            mt6701_get_velocity(&mt6701_device, &velocity);
-            
-            printf("Angle: %.2f deg | Turns: %ld | Velocity: %.2f rad/s\n", deg, turns, velocity);
-        }
-        
-        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(1)); // Run at 1 kHz
-    }
+    ESP_RETURN_ON_ERROR(mt6701_init(&sensor, sensor_i2c_device),
+                        "SENSOR", "initialize MT6701");
+
+    return mt6701_set_software_direction(&sensor, MT6701_DIR_CW);
 }
 ```
 
-## 🗄️ API Reference
+The application remains responsible for removing the I2C device and deleting
+the bus when their lifetime ends. The MT6701 driver has no `deinit()` function
+because it allocates no dynamic resource of its own.
 
-### `mt6701_init`
-```c
-esp_err_t mt6701_init(mt6701_dev_t *dev, i2c_master_dev_handle_t i2c_dev);
-```
-*   **Description:** Initializes the MT6701 device handler, sets up the default software values (zero-offset = 0, direction = CW, alpha = 0.20), creates the static mutex semaphore (if `CONFIG_MT6701_THREAD_SAFE` is enabled), and tests the physical I2C link by requesting a read.
-*   **Parameters:**
-    *   `dev`: Pointer to the `mt6701_dev_t` device structure instance (pre-allocated).
-    *   `i2c_dev`: The ESP-IDF `i2c_master_dev_handle_t` registered device handle on the master I2C bus.
-*   **Return Value:**
-    *   `ESP_OK` on success (device responding and initialized).
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `i2c_dev` is `NULL`.
-    *   `ESP_ERR_NO_MEM` if mutex allocation failed.
-    *   I2C bus errors (e.g. `ESP_ERR_TIMEOUT`) if the sensor does not acknowledge on address `0x06`.
-
-### `mt6701_read_raw_angle`
-```c
-esp_err_t mt6701_read_raw_angle(mt6701_dev_t *dev, uint16_t *raw_angle);
-```
-*   **Description:** Performs a continuous 2-byte burst transaction over the I2C bus starting at register `0x03` and ending at `0x04` to read the raw 14-bit angle directly from the hardware CORDIC processor.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `raw_angle`: Pointer to a `uint16_t` where the raw 14-bit angle (`0` to `16383`) will be stored.
-*   **Return Value:**
-    *   `ESP_OK` on successful read.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `raw_angle` is `NULL`.
-    *   I2C transmission error codes on failure.
-
-### `mt6701_update`
-```c
-esp_err_t mt6701_update(mt6701_dev_t *dev);
-```
-*   **Description:** Reads the raw angle from the hardware, applies the software offset/direction configurations, and updates the internal multi-turn counter (detecting wrapping crossovers) and velocity estimation filter. This function must be called periodically in a constant time interval task loop (e.g. 1 kHz).
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` is `NULL`.
-    *   I2C transmission error codes on failure.
-
-### `mt6701_counts_to_degrees`
-```c
-float mt6701_counts_to_degrees(uint16_t angle_counts);
-```
-*   **Description:** Converts a raw or calibrated 14-bit angle count (`0` to `16383`) to degrees without accessing the I2C bus.
-*   **Return Value:** Angle from `0.0f` to approximately `359.978f` degrees.
-
-### `mt6701_get_last_angle_counts`
+## Periodic sampling example
 
 ```c
-esp_err_t mt6701_get_last_angle_counts(mt6701_dev_t *dev,
-                                       uint16_t *angle_counts);
+esp_err_t control_sample(float *angle_deg, float *velocity_rad_s,
+                         int32_t *turns)
+{
+    ESP_RETURN_ON_ERROR(mt6701_update(&sensor), "SENSOR", "sample MT6701");
+
+    ESP_RETURN_ON_ERROR(mt6701_get_last_angle_degrees(&sensor, angle_deg),
+                        "SENSOR", "read cached angle");
+    ESP_RETURN_ON_ERROR(mt6701_get_velocity(&sensor, velocity_rad_s),
+                        "SENSOR", "read cached velocity");
+    return mt6701_get_total_turns(&sensor, turns);
+}
 ```
 
-Returns the last angle cached by `mt6701_update()` as 14-bit counts, after
-software zero and direction processing, without performing another I2C
-transaction. This is useful when a count-domain linearization is applied before
-converting the measurement to physical units.
+These getters do not access I2C. If an application needs only one independent
+angle and does not use tracking, it may instead call a fresh-read function such
+as `mt6701_read_angle_degrees()`.
 
-### `mt6701_read_calibrated_angle_counts`
+## Native counts and `esp_angle_lut`
+
+`mt6701_get_last_angle_counts()` returns the cached 14-bit angle after software
+zero and direction have been applied. This is the appropriate interface for a
+count-domain linearization:
+
 ```c
-esp_err_t mt6701_read_calibrated_angle_counts(mt6701_dev_t *dev,
-                                               uint16_t *angle_counts);
+uint16_t angle_counts;
+ESP_ERROR_CHECK(mt6701_update(&sensor));
+ESP_ERROR_CHECK(mt6701_get_last_angle_counts(&sensor, &angle_counts));
+
+uint16_t corrected_counts = esp_angle_lut_apply(angle_counts);
+float corrected_degrees = mt6701_counts_to_degrees(corrected_counts);
 ```
-*   **Description:** Performs a new sensor read, applies the software zero-offset and direction calibration, and returns the angle as 14-bit counts.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `angle_counts`: Pointer to a `uint16_t` where the calibrated counts (`0` to `16383`) will be written.
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `angle_counts` is `NULL`.
-    *   I2C transmission error codes on failure.
 
-### `mt6701_read_angle_degrees`
-```c
-esp_err_t mt6701_read_angle_degrees(mt6701_dev_t *dev, float *degrees);
+This direct example assumes `ESP_ANGLE_LUT_FULL_SCALE_COUNTS == 16384`. If the
+LUT component is configured for another resolution, the application must scale
+between MT6701 counts and LUT counts before and after correction.
+
+The correction belongs after MT6701 software zero/direction processing and
+before angle unwrapping, velocity estimation, or control calculations. The
+MT6701 driver's internal velocity estimate is based on its uncorrected cached
+angle; an application that requires LUT-corrected velocity should estimate it
+from the corrected angle outside this driver.
+
+## Velocity estimator
+
+For two consecutive calibrated samples, `mt6701_update()` calculates
+
+```text
+delta = shortest cyclic difference in counts
+instantaneous_velocity = delta * (2*pi/16384) / dt
+filtered_velocity = alpha * instantaneous_velocity
+                  + (1 - alpha) * previous_filtered_velocity
 ```
-*   **Description:** Re-reads the sensor, calibrates it, and returns the current position mapped to a floating-point degree representation.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `degrees`: Pointer to a `float` to store the angle value (`0.0f` to `360.0f`).
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `degrees` is `NULL`.
-    *   I2C transmission error codes on failure.
 
-### `mt6701_read_angle_radians`
-```c
-esp_err_t mt6701_read_angle_radians(mt6701_dev_t *dev, float *radians);
+`velocity_filter_alpha` is initialized to `0.20f`:
+
+- a value closer to 1 follows new measurements more quickly but passes more
+  quantization and timing noise;
+- a value closer to 0 smooths more strongly but adds lag;
+- 0 holds the previous filtered value;
+- 1 disables smoothing and uses instantaneous velocity.
+
+The current API exposes this coefficient as a field of `mt6701_dev_t`. If it
+must be changed, do so after `mt6701_init()` and before starting concurrent
+sampling. The driver does not clamp or validate assignments made directly by
+the application.
+
+## Multi-turn sampling limit
+
+The unwrapping algorithm assumes the shaft moves by less than half a revolution
+between consecutive successful `mt6701_update()` calls. Otherwise it cannot
+distinguish the real motion from the shorter displacement in the opposite
+direction.
+
+For a maximum speed `N` in RPM, use an update frequency satisfying
+
+```text
+f_update > N / 30
 ```
-*   **Description:** Re-reads the sensor, calibrates it, and returns the current position mapped to a floating-point radian representation.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `radians`: Pointer to a `float` to store the angle value (`0.0f` to `2*PI`).
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `radians` is `NULL`.
-    *   I2C transmission error codes on failure.
 
-### `mt6701_get_last_angle_degrees`
-```c
-esp_err_t mt6701_get_last_angle_degrees(mt6701_dev_t *dev, float *degrees);
-```
-*   **Description:** Returns the last calibrated sample stored by `mt6701_update` in degrees without performing another I2C read.
-*   **Return Value:** `ESP_OK` on success, `ESP_ERR_INVALID_ARG` for null pointers, or `ESP_ERR_TIMEOUT` if the mutex cannot be acquired.
+This is an aliasing limit, not a recommended operating margin. Scheduling
+jitter, I2C errors, and acceleration require additional margin.
 
-### `mt6701_get_total_angle_radians`
-```c
-esp_err_t mt6701_get_total_angle_radians(mt6701_dev_t *dev, float *total_radians);
-```
-*   **Description:** Calculates the total accumulated rotation in radians, including all turns computed during the periodic execution of `mt6701_update`.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `total_radians`: Pointer to a `float` to store the total accumulated radians.
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `total_radians` is `NULL`.
+## Software zero and direction
 
-### `mt6701_get_total_turns`
-```c
-esp_err_t mt6701_get_total_turns(mt6701_dev_t *dev, int32_t *turns);
-```
-*   **Description:** Reads the multi-turn counter value accumulated during execution.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `turns`: Pointer to an `int32_t` to store the count of full rotations (turns can be negative).
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `turns` is `NULL`.
+`mt6701_set_software_zero()` reads the current raw angle and stores it as the
+new origin. It also clears turns and velocity and resets the timing baseline.
 
-### `mt6701_get_velocity`
-```c
-esp_err_t mt6701_get_velocity(mt6701_dev_t *dev, float *velocity);
-```
-*   **Description:** Retrieves the low-pass filtered angular velocity estimated during calls to `mt6701_update`.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `velocity`: Pointer to a `float` to store the speed in radians per second (`rad/s`).
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` or `velocity` is `NULL`.
+`mt6701_set_software_direction()` changes whether native counts are preserved
+or inverted. It keeps the existing zero but clears turns and velocity and reads
+a new baseline so the coordinate change is not interpreted as shaft movement.
 
-### `mt6701_set_software_zero`
-```c
-esp_err_t mt6701_set_software_zero(mt6701_dev_t *dev);
-```
-*   **Description:** Reads the current hardware angle and sets it as the zero-offset value (`zero_offset`), resetting the turns and velocity states. All subsequent angle calls will measure relative to this reference point.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` is `NULL`.
-    *   I2C transmission error codes on failure.
+Both settings live only in RAM and return to zero/CW after `mt6701_init()` or a
+restart. The component deliberately avoids MT6701 EEPROM programming.
 
-### `mt6701_set_software_direction`
-```c
-esp_err_t mt6701_set_software_direction(mt6701_dev_t *dev, mt6701_direction_t dir);
-```
-*   **Description:** Configures the software rotation direction behavior. Modifies the internal direction setting and resets turns and velocity states to prevent configuration transition glitches.
-*   **Parameters:**
-    *   `dev`: Pointer to the initialized `mt6701_dev_t` structure.
-    *   `dir`: Rotation direction (`MT6701_DIR_CW` for standard, `MT6701_DIR_CCW` for inverted).
-*   **Return Value:**
-    *   `ESP_OK` on success.
-    *   `ESP_ERR_INVALID_ARG` if `dev` is `NULL`.
-    *   I2C transmission error codes on failure.
+## API summary and call relationships
 
----
-![SmartSensing.me Logo](https://smartsensing.me/ssme-logo.png)
+| Function | New I2C read? | Called inside the component by | Main result |
+|---|:---:|---|---|
+| `mt6701_init` | Yes | Nobody | Initialize and verify communication |
+| `mt6701_init_from_raw_angle` | No | Nobody | Initialize from a caller-acquired sample |
+| `mt6701_read_raw_angle` | Yes | `init`, `update`, calibrated reads, zero, direction | Native count |
+| `mt6701_counts_to_degrees` | No | Fresh/cached degree functions | Pure conversion |
+| `mt6701_update` | Yes | Nobody | Update all tracking state |
+| `mt6701_update_from_raw_angle` | No | `mt6701_update` | Update tracking from a caller-acquired sample |
+| `mt6701_read_calibrated_angle_counts` | Yes | Fresh degree/radian functions | Fresh processed count |
+| `mt6701_read_angle_degrees` | Yes | Nobody | Fresh angle in degrees |
+| `mt6701_read_angle_radians` | Yes | Nobody | Fresh angle in radians |
+| `mt6701_get_last_angle_counts` | No | Nobody | Cached processed count |
+| `mt6701_get_last_angle_degrees` | No | Nobody | Cached angle in degrees |
+| `mt6701_get_total_angle_radians` | No | Nobody | Cached continuous angle |
+| `mt6701_get_total_turns` | No | Nobody | Cached full-turn count |
+| `mt6701_get_velocity` | No | Nobody | Cached filtered velocity |
+| `mt6701_set_software_zero` | Yes | Nobody | Rebase origin and tracking |
+| `mt6701_set_software_direction` | Yes | Nobody | Change direction and reset tracking |
 
-## 📝 Description
+Detailed parameters, return codes, internal callees, and caller relationships
+are documented in [`include/mt6701.h`](include/mt6701.h). The implementation in
+[`mt6701.c`](mt6701.c) is divided into commented functional blocks.
 
-This project is part of the **SmartSensing.me** ecosystem. We apply real fundamentals of instrumentation engineering and high-performance embedded systems.
+Applications that own an asynchronous acquisition pipeline can use
+`mt6701_init_from_raw_angle()` and `mt6701_update_from_raw_angle()`. The caller
+must retain the receive buffer until the transfer completes and supply the
+timestamp associated with that sample. The component then performs the same
+software calibration, unwrapping, turn tracking, and velocity update without
+starting another I2C transaction.
 
-Unlike superficial, clickbait content, this repository delivers:
-- **Originality:** Unique implementations based on nearly 30 years of academic experience.
-- **Technical Depth:** Professional usage of the ESP-IDF framework and FreeRTOS.
-- **Pedagogy:** Documented and structured code for those seeking genuine technical growth.
+## Practical limitations
 
-> "We transform signals from the physical world into digital intelligence, with no shortcuts."
-
----
-
-## 👤 About the Author
-
-**José Alexandre de França** *Associate Professor at the Department of Electrical Engineering of UEL*
-
-Electrical Engineer with nearly three decades of experience in undergraduate and postgraduate teaching. PhD in Electrical Engineering, researcher in electronic instrumentation, and embedded systems developer. SmartSensing.me is my commitment to raising the bar of technology education in Brazil.
-
-- 🌐 **Website:** [smartsensing.me](https://smartsensing.me)
-- 📧 **E-mail:** [info@smartsensing.me](mailto:info@smartsensing.me)
-- 📺 **YouTube:** [@smartsensingme](https://youtube.com/@smartsensingme)
-- 📸 **Instagram:** [@smartsensing.me](https://instagram.com/smartsensing.me)
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+- Angle resolution is fixed at 14 bits: 16384 counts per revolution.
+- Multi-turn state is held in RAM and is not retained across resets.
+- Software zero and direction are held in RAM and are not stored in the sensor.
+- I2C read errors leave cached tracking state unchanged.
+- The driver does not detect magnetic-field weakness, excessive air gap, or
+  magnet eccentricity.
+- The filtered velocity is a simple first-order estimate, not a Kalman filter.
+- An angle-linearity LUT is intentionally kept in the separate reusable
+  `esp_angle_lut` component.
