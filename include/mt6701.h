@@ -35,6 +35,10 @@ typedef enum {
 typedef struct {
   /** ESP-IDF I2C device handle supplied by the application. */
   i2c_master_dev_handle_t i2c_dev;
+  /** Raw-read timeout in ms; -1 preserves indefinite legacy waits. Initialize
+   * with mt6701_init_with_timeout(). Finite waits are quantized to RTOS ticks
+   * and are not an end-to-end wall-clock deadline for the complete call. */
+  int transfer_timeout_ms;
 
   /** Raw native count subtracted before direction processing. */
   uint16_t zero_offset;
@@ -71,7 +75,7 @@ typedef struct {
  * sample and its timestamp as the tracking baseline.
  *
  * This public entry point is called only by application code. No function in
- * this component calls it. Internally it calls mt6701_read_raw_angle(). The
+ * this component calls it. Internally it calls mt6701_init_with_timeout(). The
  * application must create and register the ESP-IDF I2C bus/device first.
  *
  * @param[out] dev Caller-owned instance that remains valid while in use.
@@ -81,6 +85,19 @@ typedef struct {
  *         the initial communication check.
  */
 esp_err_t mt6701_init(mt6701_dev_t *dev, i2c_master_dev_handle_t i2c_dev);
+
+/** Initialize and verify communication with a per-instance raw-read timeout.
+ * Called externally; mt6701_init() also calls this with -1 for compatibility.
+ * Calls initialize_state(), mt6701_read_raw_angle() and establish_baseline().
+ * timeout_ms is -1 (indefinite) or positive milliseconds converting to at
+ * least one RTOS tick. It applies separately to the raw-read mutex and I2C
+ * waits, not an end-to-end deadline. Other initialization, ownership and
+ * lifetime rules match mt6701_init(). Initialize in task context before use.
+ * Returns ESP_ERR_INVALID_ARG for invalid arguments/timeout, otherwise the
+ * initialization/communication errors documented for mt6701_init(). */
+esp_err_t mt6701_init_with_timeout(mt6701_dev_t *dev,
+                                   i2c_master_dev_handle_t i2c_dev,
+                                   int timeout_ms);
 
 /**
  * @brief Initialize an instance from an angle sample acquired by the caller.

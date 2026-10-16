@@ -1,5 +1,21 @@
 # `esp-mt6701`
 
+## Espera finita opcional
+
+`mt6701_init_with_timeout(&sensor, device, timeout_ms)` inicializa e verifica
+a comunicação com timeout por instância para leituras brutas. Aceita -1 para
+espera indefinida ou milissegundos positivos que representem ao menos um tick.
+Por exemplo, 2 ms requer `CONFIG_FREERTOS_HZ>=500`. Timeout zero, negativo
+diferente de -1 ou menor que um tick retorna `ESP_ERR_INVALID_ARG`.
+`mt6701_init()` mantém sua assinatura e espera indefinida anteriores;
+`mt6701_init_from_raw_angle()` também inicializa espera indefinida.
+
+O campo `transfer_timeout_ms` é aplicado separadamente à espera do mutex da
+leitura bruta e às esperas I2C do ESP-IDF. Não representa um prazo global da
+chamada. Outros acessos ao estado em cache mantêm a sincronização anterior.
+Configure antes de iniciar a aquisição; não altere campos concorrentemente.
+Erros I2C preservam a saída bruta do chamador e são propagados pela API.
+
 Documentação em inglês: [README.md](README.md).
 
 `esp-mt6701` é um componente ESP-IDF para leitura, por I2C, do ângulo absoluto

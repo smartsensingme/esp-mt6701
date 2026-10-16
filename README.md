@@ -1,5 +1,21 @@
 # `esp-mt6701`
 
+## Optional finite transfer waits
+
+`mt6701_init_with_timeout(&sensor, device, timeout_ms)` initializes and checks
+communication with a per-instance timeout for raw-angle reads. Pass -1 for
+legacy indefinite waits, or positive milliseconds converting to at least one
+FreeRTOS tick. For example, 2 ms requires `CONFIG_FREERTOS_HZ>=500`.
+`mt6701_init()` retains its original signature and indefinite-wait behavior;
+`mt6701_init_from_raw_angle()` also initializes indefinite waits.
+
+The instance stores `transfer_timeout_ms`; the raw-read mutex wait and ESP-IDF
+I2C waits use this value separately. It is not an end-to-end wall-clock bound.
+Other cached-state APIs retain their existing locking semantics. Configure the
+instance before starting acquisition; do not modify its fields concurrently.
+An invalid/zero/sub-tick timeout returns `ESP_ERR_INVALID_ARG`. I2C failures
+leave the raw-angle output untouched and propagate the ESP-IDF error.
+
 Portuguese documentation: [README.pt-br.md](README.pt-br.md).
 
 `esp-mt6701` is an ESP-IDF component for reading the 14-bit absolute angle of
@@ -255,6 +271,7 @@ restart. The component deliberately avoids MT6701 EEPROM programming.
 | Function | New I2C read? | Called inside the component by | Main result |
 |---|:---:|---|---|
 | `mt6701_init` | Yes | Nobody | Initialize and verify communication |
+| `mt6701_init_with_timeout` | Yes | `init` | Initialize with per-instance raw-read timeout |
 | `mt6701_init_from_raw_angle` | No | Nobody | Initialize from a caller-acquired sample |
 | `mt6701_read_raw_angle` | Yes | `init`, `update`, calibrated reads, zero, direction | Native count |
 | `mt6701_counts_to_degrees` | No | Fresh/cached degree functions | Pure conversion |

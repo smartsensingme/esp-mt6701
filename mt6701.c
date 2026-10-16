@@ -1,6 +1,7 @@
 #include "mt6701.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 #include <math.h>
 
 #ifndef M_PI
@@ -16,6 +17,7 @@ static esp_err_t initialize_state(mt6701_dev_t *dev,
   }
 
   dev->i2c_dev = i2c_dev;
+  dev->transfer_timeout_ms = -1;
   dev->zero_offset = 0;
   dev->direction = MT6701_DIR_CW;
   dev->total_turns = 0;
@@ -45,11 +47,23 @@ static void establish_baseline(mt6701_dev_t *dev, uint16_t raw_angle,
 }
 
 esp_err_t mt6701_init(mt6701_dev_t *dev, i2c_master_dev_handle_t i2c_dev) {
+  return mt6701_init_with_timeout(dev, i2c_dev, -1);
+}
+
+esp_err_t mt6701_init_with_timeout(mt6701_dev_t *dev,
+                                   i2c_master_dev_handle_t i2c_dev,
+                                   int timeout_ms) {
+  /* Reject finite waits that ESP-IDF would truncate to zero RTOS ticks. */
+  if (timeout_ms < -1 || timeout_ms == 0 ||
+      (timeout_ms > 0 && pdMS_TO_TICKS(timeout_ms) == 0)) {
+    return ESP_ERR_INVALID_ARG;
+  }
   /* Interface block: both caller-owned objects are required. */
   esp_err_t state_error = initialize_state(dev, i2c_dev);
   if (state_error != ESP_OK) {
     return state_error;
   }
+  dev->transfer_timeout_ms = timeout_ms;
 
   /* Communication block: verify the registered address and bus by acquiring
    * one native sample through the same path used during normal operation. */
@@ -85,14 +99,16 @@ esp_err_t mt6701_init_from_raw_angle(mt6701_dev_t *dev,
 
 esp_err_t mt6701_read_raw_angle(mt6701_dev_t *dev, uint16_t *raw_angle) {
   /* Interface block: require both an initialized instance and destination. */
-  if (!dev || !raw_angle) {
+  if (!dev || !dev->i2c_dev || !raw_angle) {
     return ESP_ERR_INVALID_ARG;
   }
 
 #if CONFIG_MT6701_THREAD_SAFE
   /* Synchronization block: serialize the complete I2C transaction with every
    * other operation using this instance. */
-  if (xSemaphoreTake(dev->lock, portMAX_DELAY) != pdTRUE) {
+  TickType_t wait_ticks = dev->transfer_timeout_ms < 0
+      ? portMAX_DELAY : pdMS_TO_TICKS(dev->transfer_timeout_ms);
+  if (xSemaphoreTake(dev->lock, wait_ticks) != pdTRUE) {
     return ESP_ERR_TIMEOUT;
   }
 #endif
@@ -102,7 +118,8 @@ esp_err_t mt6701_read_raw_angle(mt6701_dev_t *dev, uint16_t *raw_angle) {
   uint8_t reg = MT6701_REG_ANGLE_H;
   uint8_t buffer[2];
   esp_err_t err =
-      i2c_master_transmit_receive(dev->i2c_dev, &reg, 1, buffer, 2, -1);
+      i2c_master_transmit_receive(dev->i2c_dev, &reg, 1, buffer, 2,
+                                  dev->transfer_timeout_ms);
 
   /* Decode block: concatenate the high byte and upper six bits of the low
    * register only after a successful transfer. */
