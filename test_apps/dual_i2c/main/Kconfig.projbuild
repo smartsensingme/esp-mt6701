@@ -1,0 +1,22 @@
+menu "Dual MT6701 hardware test"
+config MT6701_TEST_SDA_GPIO
+    int "I2C SDA GPIO"
+    range 0 21
+    default 8
+config MT6701_TEST_SCL_GPIO
+    int "I2C SCL GPIO"
+    range 0 21
+    default 9
+config MT6701_TEST_I2C_HZ
+    int "I2C bus frequency (Hz)"
+    range 10000 400000
+    default 400000
+config MT6701_TEST_LEFT_ADDRESS
+    hex "LEFT sensor I2C address (7-bit)"
+    range 0x01 0x77
+    default 0x06
+config MT6701_TEST_RIGHT_ADDRESS
+    hex "RIGHT sensor I2C address (7-bit)"
+    range 0x01 0x77
+    default 0x46
+endmenu

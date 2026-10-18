@@ -310,3 +310,13 @@ starting another I2C transaction.
 - The filtered velocity is a simple first-order estimate, not a Kalman filter.
 - An angle-linearity LUT is intentionally kept in the separate reusable
   `esp_angle_lut` component.
+
+## Hardware diagnostic
+
+The standalone [dual I2C test](test_apps/dual_i2c/README.md) checks two configured
+MT6701 addresses, passive raw-angle acquisition, error/recovery accounting and
+200-Hz timing. It has its own project/Kconfig and does not depend on the robot
+application or motor bridge. See its README for local dependencies and usage.
+
+See [CHANGELOG.md](CHANGELOG.md) for the extracted hardware diagnostic and its
+validation/compatibility notes.
